@@ -1,0 +1,73 @@
+{% extends "base.html.jinja" %}
+
+{% block content %}
+<div class="w-2/3 mx-auto items-center justify-center p-2 mt-2">
+  <div class="text-center text-3xl text-blue-600">Index Page</div>
+
+  <div x-data="recodingState()">
+    <button
+      calss="w-18 h-18 bg-blue-300 px-2 bg-red-500 m-10 rounded-lg"
+      @keyup.space.window="alert('hello!')"
+    >
+      录音
+    </button>
+    <i class="fa-regular fa-microphone-lines"></i>
+  </div>
+
+  <div class="space-y-4"></div>
+
+  <ul hx-ext="sse" sse-connect="/chats" sse-swap="message" hx-swap="afterend">
+    Contents of this box will be updated in real time with every SSE message
+    received from the chatroom.
+  </ul>
+</div>
+{% endblock content %}
+
+{% block script %}
+<script lang="javascript">
+
+
+ class Recorder {
+  mediaRecorder;
+  recordedChunks = [];
+
+  async init() {
+    console.log("the init of Recorder");
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      this.mediaRecorder = new MediaRecorder(stream);
+
+      this.mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          this.recordedChunks.push(event.data);
+        }
+      };
+
+      this.mediaRecorder.onstop = () => {
+        const audioBlob = new Blob(this.recordedChunks, { type: 'audio/mp3' });
+        fetch('/assistant', { method: 'POST', body: audioBlob });
+      };
+    } catch (error) {
+      console.error('Error accessing microphone:', error.message);
+    }
+  }
+
+  startRecording() {
+    this.recordedChunks = [];
+    this.mediaRecorder.start();
+  }
+
+  stopRecording() {
+    if (this.mediaRecorder.state === 'recording') {
+      this.mediaRecorder.stop();
+    }
+  }
+}
+
+  document.addEventListener("DOMContentLoaded", () => {
+    const recorder = new Recorder();
+    recorder.init()
+  })
+</script>
+{% endblock %}
