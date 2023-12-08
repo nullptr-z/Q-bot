@@ -3,11 +3,11 @@ use std::sync::Arc;
 use anyhow::{Ok, Result};
 use axum::{
     routing::{get, post},
-    Router, Server,
+    Router,
 };
 use axum_server::tls_rustls::RustlsConfig;
 use clap::Parser;
-use q_bot::handlers::{chats_handler, index_page};
+use q_bot::handlers::{assistant_handler, chats_handler, index_page};
 use tower_http::services::ServeDir;
 use tracing::info;
 
@@ -34,6 +34,7 @@ async fn main() -> Result<()> {
         .nest_service("/public", ServeDir::new("./html-ui/public"))
         .route("/", get(index_page))
         .route("/chats", get(chats_handler))
+        .route("/assistant", post(assistant_handler))
         .with_state(state);
 
     let addr = format!("0.0.0.0:{}", args.port);

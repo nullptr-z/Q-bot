@@ -1,35 +1,67 @@
 
-function recodingState() {
+let recorder
+let isRecording = false
+
+function recordingState() {
+  if (isRecording) {
+    console.log('recordingState stop')
+    recorder.stop();
+  } else {
+    console.log('recordingState start')
+    recorder.start();
+  }
+  isRecording = !this.isRecording;
 
 }
 
-export default class Recorder {
-  mediaRecorder
-  recordedChunks
+document.addEventListener("DOMContentLoaded", function () {
+  console.log('initialization')
+  recorder = new Recorder();
+  recorder.init();
+});
+
+function startRecording() {
+  console.log('startRecording')
+  recorder.start()
+}
+
+class Recorder {
+  mediaRecorder;
+  recordedChunks = [];
 
   async init() {
-    console.log("the init of Recorder")
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    this.mediaRecorder = new MediaRecorder(stream);
+    console.log("the init of Recorder");
 
-    this.mediaRecorder.ondataavailable = event => {
-      if (event.data.size > 0) {
-        this.recordedChunks.push(event.data);
-      }
-    };
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      this.mediaRecorder = new MediaRecorder(stream);
 
-    this.mediaRecorder.onstop = () => {
-      const audioBlob = new Blob(this.recordedChunks, { type: 'audio/mp3' });
-      // const audioUrl = URL.createObjectURL(audioBlob);
-      // document.getElementById('audioPlayer').src = audioUrl;
+      this.mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          this.recordedChunks.push(event.data);
+        }
+      };
 
-      fetch('/assistant', { method: 'POST', body: audioBlob })
-    };
+      this.mediaRecorder.onstop = () => {
+        const audioBlob = new Blob(this.recordedChunks, { type: 'audio/mp3' });
+
+        const formData = new FormData();
+        formData.append('audio', audioBlob);
+
+        fetch('/assistant',
+          {
+            method: 'POST',
+            body: formData,
+          });
+      };
+    } catch (error) {
+      console.error('Error accessing microphone:', error.message);
+    }
   }
 
   start() {
     this.recordedChunks = [];
-    this.mediaRecorder.start()
+    this.mediaRecorder.start();
   }
 
   stop() {

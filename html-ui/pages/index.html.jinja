@@ -4,10 +4,10 @@
 <div class="w-2/3 mx-auto items-center justify-center p-2 mt-2">
   <div class="text-center text-3xl text-blue-600">Index Page</div>
 
-  <div x-data="recodingState()">
+  <div x-data="{}">
     <button
       calss="w-18 h-18 bg-blue-300 px-2 bg-red-500 m-10 rounded-lg"
-      @keyup.space.window="alert('hello!')"
+      @keyup.space.window="recordingState"
     >
       录音
     </button>
@@ -24,50 +24,77 @@
 {% endblock content %}
 
 {% block script %}
-<script lang="javascript">
+<script>
+  let recorder
+  let isRecording = false
 
-
- class Recorder {
-  mediaRecorder;
-  recordedChunks = [];
-
-  async init() {
-    console.log("the init of Recorder");
-
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      this.mediaRecorder = new MediaRecorder(stream);
-
-      this.mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          this.recordedChunks.push(event.data);
-        }
-      };
-
-      this.mediaRecorder.onstop = () => {
-        const audioBlob = new Blob(this.recordedChunks, { type: 'audio/mp3' });
-        fetch('/assistant', { method: 'POST', body: audioBlob });
-      };
-    } catch (error) {
-      console.error('Error accessing microphone:', error.message);
+  function recordingState() {
+    if (isRecording) {
+      console.log('recordingState stop')
+      recorder.stop();
+    } else {
+      console.log('recordingState start')
+      recorder.start();
     }
+
+    isRecording = !isRecording;
   }
 
-  startRecording() {
-    this.recordedChunks = [];
-    this.mediaRecorder.start();
+  document.addEventListener("DOMContentLoaded", function () {
+    console.log('initialization')
+    recorder = new Recorder();
+    recorder.init();
+  });
+
+  function startRecording() {
+    console.log('startRecording')
+    recorder.start()
   }
 
-  stopRecording() {
-    if (this.mediaRecorder.state === 'recording') {
+  class Recorder {
+    mediaRecorder;
+    recordedChunks = [];
+
+    async init() {
+      console.log("the init of Recorder");
+
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        this.mediaRecorder = new MediaRecorder(stream);
+
+        this.mediaRecorder.ondataavailable = (event) => {
+          if (event.data.size > 0) {
+            this.recordedChunks.push(event.data);
+          }
+        };
+
+        this.mediaRecorder.onstop = async() => {
+          const audioBlob = new Blob(this.recordedChunks, { type: 'audio/mp3' });
+
+          const formData = new FormData();
+          formData.append('audio', audioBlob);
+
+          fetch(
+            '/assistant',
+            { method: 'POST',  body: formData }
+          ).then(async (res)=>{
+            let data = await res.json();
+            console.log("> res:", data);
+          });
+        };
+      } catch (error) {
+        console.error('Error accessing microphone:', error.message);
+      }
+    }
+
+    start() {
+      this.recordedChunks = [];
+      this.mediaRecorder.start();
+    }
+
+    stop() {
       this.mediaRecorder.stop();
     }
   }
-}
-
-  document.addEventListener("DOMContentLoaded", () => {
-    const recorder = new Recorder();
-    recorder.init()
-  })
 </script>
 {% endblock %}
