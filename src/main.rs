@@ -7,21 +7,12 @@ use axum::{
 };
 use axum_server::tls_rustls::RustlsConfig;
 use clap::Parser;
-use q_bot::handlers::{assistant_handler, chats_handler, index_page};
+use q_bot::{
+    handlers::{assistant_handler, chats_handler, index_page},
+    AppState, Args,
+};
 use tower_http::services::ServeDir;
 use tracing::info;
-
-#[derive(Debug, Default)]
-pub(crate) struct AppState {}
-
-#[derive(Debug, Parser)]
-#[clap(name = "qboy")]
-struct Args {
-    #[clap(short, long, default_value = "8080")]
-    port: u16,
-    #[clap(short, long, default_value = ".certs")]
-    cert_path: String,
-}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -31,10 +22,11 @@ async fn main() -> Result<()> {
     let state = Arc::new(AppState::default());
 
     let app = Router::new()
-        .nest_service("/public", ServeDir::new("./html-ui/public"))
         .route("/", get(index_page))
         .route("/chats", get(chats_handler))
         .route("/assistant", post(assistant_handler))
+        .nest_service("/public", ServeDir::new("./html-ui/public"))
+        .nest_service("/assets", ServeDir::new("/tmp/qbot"))
         .with_state(state);
 
     let addr = format!("0.0.0.0:{}", args.port);

@@ -1,6 +1,6 @@
 
 run:
-	@RUST_LOG=info cargo run
+	@RUST_LOG=info proxychains4 cargo run
 
 watch:
 	@echo "watch.."
