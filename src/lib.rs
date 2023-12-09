@@ -12,7 +12,8 @@ use tokio::sync::broadcast;
 #[derive(Debug)]
 pub struct AppState {
     pub llm: LlmSdk,
-    pub senders: DashMap<String, broadcast::Sender<serde_json::Value>>,
+    pub signals: DashMap<String, broadcast::Sender<String>>,
+    pub chats: DashMap<String, broadcast::Sender<String>>,
 }
 
 #[derive(Debug, Parser)]
@@ -32,7 +33,8 @@ impl Default for AppState {
                 std::env::var("OPENAI_API_KEY").unwrap(),
                 3,
             ),
-            senders: DashMap::new(),
+            signals: DashMap::new(),
+            chats: DashMap::new(),
         }
     }
 }

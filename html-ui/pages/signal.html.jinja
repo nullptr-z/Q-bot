@@ -1,0 +1,12 @@
+{% match self %}
+  {% when AssistantEvent::Processing with (val) %}
+    <p class='text-blue-300'>  Processing {{ val }} </p>
+  {% when AssistantEvent::Finish with (val) %}
+    <p class='text-gray-300'>  Finish {{ val }} </p>
+  {% when AssistantEvent::Error with (val) %}
+    <p class='text-red-600'>  Error {{ val }} </p>
+  {% when AssistantEvent::Complete %}
+    <p class='text-green-600'>  Complete </p>
+  {% else %}
+    <p class='text-block-800'>  Unkonwn event </p>
+{% endmatch %}

@@ -8,7 +8,7 @@ use axum::{
 use axum_server::tls_rustls::RustlsConfig;
 use clap::Parser;
 use q_bot::{
-    handlers::{assistant_handler, chats_handler, index_page},
+    handlers::{assistant_handler, chats_handler, index_page, signal_handler},
     AppState, Args,
 };
 use tower_http::services::ServeDir;
@@ -24,6 +24,7 @@ async fn main() -> Result<()> {
     let app = Router::new()
         .route("/", get(index_page))
         .route("/chats", get(chats_handler))
+        .route("/signals", get(signal_handler))
         .route("/assistant", post(assistant_handler))
         .nest_service("/public", ServeDir::new("./html-ui/public"))
         .nest_service("/assets", ServeDir::new("/tmp/qbot"))

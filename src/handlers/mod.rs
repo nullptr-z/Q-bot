@@ -2,25 +2,27 @@ mod assistant;
 mod chats;
 mod common;
 
+use askama::Template;
 pub use assistant::*;
 pub use chats::*;
 pub use common::*;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use strum::{Display, EnumString};
 
 // 几种事件
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Template)]
+#[template(path = "signal.html.jinja")]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum AssistantEvent {
     Processing(AssistantStep),
     Finish(AssistantStep),
     Error(String),
-    Complete(String),
+    Complete,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, EnumString, Display)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 pub enum AssistantStep {
     UploadAudio,
     Transcription,
@@ -29,19 +31,19 @@ pub enum AssistantStep {
 }
 
 impl AssistantEvent {
-    pub fn processing(step: AssistantStep) -> serde_json::Value {
-        serde_json::to_value(Self::Processing(step)).unwrap()
+    pub fn processing(step: AssistantStep) -> String {
+        Self::Processing(step).to_string()
     }
 
-    pub fn finish(step: AssistantStep) -> Value {
-        serde_json::to_value(AssistantEvent::Finish(step)).unwrap()
+    pub fn finish(step: AssistantStep) -> String {
+        AssistantEvent::Finish(step).to_string()
     }
 
-    pub fn error(message: impl Into<String>) -> Value {
-        serde_json::to_value(AssistantEvent::Error(message.into())).unwrap()
+    pub fn error(message: impl Into<String>) -> String {
+        AssistantEvent::Error(message.into()).to_string()
     }
 
-    pub fn complete(data: impl Into<String>) -> Value {
-        serde_json::to_value(AssistantEvent::Complete(data.into())).unwrap()
+    pub fn complete() -> String {
+        AssistantEvent::Complete.to_string()
     }
 }

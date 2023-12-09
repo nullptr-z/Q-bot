@@ -9,8 +9,8 @@ use axum::{
 use llm_sdk::{
     ChatCompletionMessage, ChatCompletionRequest, LlmSdk, SpeechRequest, WhisperRequest,
 };
-use serde_json::{json, Value};
-use tokio::fs;
+use serde_json::json;
+use tokio::{fs, sync::broadcast};
 use tracing::info;
 use uuid::Uuid;
 
@@ -21,43 +21,89 @@ use super::{AssistantEvent, AssistantStep};
 pub async fn assistant_handler(
     context: AppContext,
     State(state): State<Arc<AppState>>,
-    mut multipart: Multipart,
+    multipart: Multipart,
 ) -> Result<impl IntoResponse, AppError> {
     let device_id = &context.device_id;
-    println!("【 &context.device_id 】==> {:?}", device_id);
-    let tx = state
-        .senders
-        .get(device_id)
-        .ok_or_else(|| anyhow!("device_id not found"))?
-        .clone();
     info!("start assist for {}", device_id);
 
-    tx.send(serde_json::Value::String(in_audio_upload()))?;
+    // 信号，连接状态
+    let signal_sender = state
+        .signals
+        .get(device_id)
+        .ok_or_else(|| anyhow!("device_id not found for signal sender"))?
+        .clone();
+
+    // 聊天内容
+    let chat_sender = state
+        .chats
+        .get(device_id)
+        .ok_or_else(|| anyhow!("device_id not found for chat sender"))?
+        .clone();
+
+    let llm = &state.llm;
+
+    let _ = match process(&signal_sender, &chat_sender, llm, device_id, multipart).await {
+        Err(err) => {
+            signal_sender.send(error(err.to_string()))?;
+            return Ok(Json(json!({"status":"error"})));
+        }
+        _ => {}
+    };
+
+    Ok(Json(json!({"status":"done"})))
+}
+
+async fn process(
+    signal_sender: &broadcast::Sender<String>,
+    chat_sender: &broadcast::Sender<String>,
+    llm: &LlmSdk,
+    device_id: &str,
+    mut multipart: Multipart,
+) -> Result<()> {
+    signal_sender.send(in_audio_upload())?;
 
     let Some(field) = multipart.next_field().await? else {
         return Err(anyhow!("expected an audio field"))?;
     };
-
     let data = match field.name() {
         Some(name) if name == "audio" => field.bytes().await?,
         _ => return Err(anyhow!("expected an audio field"))?,
     };
 
-    tx.send(serde_json::Value::String(in_transcription()))?;
-    let llm = &state.llm;
+    info!("audio buffer size {}", data.len());
+
+    signal_sender.send(in_transcription())?;
+    // 语音转文字
     let input = transcript(llm, data.to_vec()).await?;
+    info!("> input {}", &input);
+    chat_sender.send(format!("<p>A: {}</p></br>", input).into())?;
 
-    tx.send(serde_json::Value::String(in_chat_completion()))?;
+    // 内容发送给聊天API
+    signal_sender.send(in_chat_completion())?;
     let output = chat_completion(llm, &input).await?;
+    info!("> output {}", &output);
 
-    tx.send(serde_json::Value::String(in_speech()))?;
-    let audio_url = speech(llm, &context.device_id, &output).await?;
+    // 回复内容转成语音
+    signal_sender.send(in_speech())?;
+    let audio_url = speech(llm, device_id, &output).await?;
+    info!("audio_url {:?}", audio_url);
 
-    tx.send(serde_json::Value::String(complete(output.clone())))?;
+    signal_sender.send(complete())?;
+    chat_sender.send(
+        format!(
+            "
+                <li><audio controls autoplay>
+                    <source src='{}' type='audio/mp3'>
+                </audio></li>
+                <p>Q: {}</p>
+                </br>
+            ",
+            audio_url, output
+        )
+        .into(),
+    )?;
 
-    Ok(Json(
-        json!({"len": data.len(),"request":input,"response":output,"audio_url":audio_url}),
-    ))
+    Ok(())
 }
 
 async fn transcript(llm: &LlmSdk, data: Vec<u8>) -> anyhow::Result<String> {
@@ -69,7 +115,7 @@ async fn transcript(llm: &LlmSdk, data: Vec<u8>) -> anyhow::Result<String> {
 
 async fn chat_completion(llm: &LlmSdk, prompt: &str) -> anyhow::Result<String> {
     let messages = vec![
-        ChatCompletionMessage::new_system("我是助手Q,有什么事情尽管问我", ""),
+        ChatCompletionMessage::new_system("Hi! I's Q", ""),
         ChatCompletionMessage::new_user(prompt, "zheng"),
     ];
 
@@ -102,45 +148,59 @@ async fn speech(llm: &LlmSdk, device_id: &str, text: &str) -> anyhow::Result<Str
 }
 
 fn in_audio_upload() -> String {
-    serde_json::to_string(&AssistantEvent::Processing(AssistantStep::UploadAudio)).unwrap()
+    AssistantEvent::processing(AssistantStep::UploadAudio)
 }
 
 fn in_transcription() -> String {
-    serde_json::to_string(&AssistantEvent::Processing(AssistantStep::Transcription)).unwrap()
+    AssistantEvent::processing(AssistantStep::Transcription)
 }
 
 fn in_chat_completion() -> String {
-    serde_json::to_string(&AssistantEvent::Processing(AssistantStep::ChatCompletion)).unwrap()
+    AssistantEvent::processing(AssistantStep::ChatCompletion)
 }
 
 fn in_speech() -> String {
-    serde_json::to_string(&AssistantEvent::Processing(AssistantStep::Speech)).unwrap()
+    AssistantEvent::processing(AssistantStep::Speech)
 }
 
 #[allow(dead_code)]
 fn finish_upload_audio() -> String {
-    serde_json::to_string(&AssistantEvent::Finish(AssistantStep::UploadAudio)).unwrap()
+    AssistantEvent::finish(AssistantStep::UploadAudio)
 }
 
 #[allow(dead_code)]
 fn finish_transcription() -> String {
-    serde_json::to_string(&AssistantEvent::Finish(AssistantStep::Transcription)).unwrap()
+    AssistantEvent::finish(AssistantStep::Transcription)
 }
 
 #[allow(dead_code)]
 fn finish_chat_completion() -> String {
-    serde_json::to_string(&AssistantEvent::Finish(AssistantStep::ChatCompletion)).unwrap()
+    AssistantEvent::finish(AssistantStep::ChatCompletion)
 }
 
 #[allow(dead_code)]
 fn finish_speech() -> String {
-    serde_json::to_string(&AssistantEvent::Finish(AssistantStep::Speech)).unwrap()
+    AssistantEvent::finish(AssistantStep::Speech)
 }
 
-fn complete(data: impl Into<String>) -> String {
-    serde_json::to_string(&AssistantEvent::complete(data)).unwrap()
+fn complete() -> String {
+    AssistantEvent::complete()
 }
 
 fn error(msg: impl Into<String>) -> String {
-    serde_json::to_string(&AssistantEvent::Error(msg.into())).unwrap()
+    AssistantEvent::Error(msg.into()).to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_error_render() {
+        let event: String = error("error").into();
+        assert_eq!(
+            event,
+            r#"\n    <p class=\"text-red-600\">  Error error </p>\n  "#
+        );
+    }
 }

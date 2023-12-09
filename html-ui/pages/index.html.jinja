@@ -2,24 +2,29 @@
 
 {% block content %}
 <div class="w-2/3 mx-auto items-center justify-center p-2 mt-2">
-  <div class="text-center text-3xl text-blue-600">Index Page</div>
-
-  <div x-data="{}">
+  <div class="text-center text-3xl text-blue-600">
+    你好！我是AI分身，我叫Q，你有问题都可以问我！
+  </div>
+  <div x-data="{}" class="border-2 border-amber-600">
     <button
       calss="w-18 h-18 bg-blue-300 px-2 bg-red-500 m-10 rounded-lg"
       @keyup.space.window="recordingState"
     >
-      录音
+      按下空格开始接听
     </button>
     <i class="fa-regular fa-microphone-lines"></i>
   </div>
 
-  <div class="space-y-4"></div>
-
-  <ul hx-ext="sse" sse-connect="/chats" sse-swap="message" hx-swap="afterend">
-    Contents of this box will be updated in real time with every SSE message
-    received from the chatroom.
+  <ul hx-ext="sse" sse-connect="/chats" sse-swap="message" hx-swap="beforeend"
+    class="mt-4 p-2 rounded border flex items-center justify-center">
   </ul>
+
+  <div class="space-y-8"/>
+
+  {# 单向数据: hx-ext="sse" sse-connect="/signals" sse-swap="message" #}
+  <div hx-ext="sse" sse-connect="/signals" sse-swap="message" class="p-2 flex items-center justify-center text-center">
+    status:
+  </div>
 </div>
 {% endblock content %}
 
