@@ -1,5 +1,10 @@
 use std::sync::Arc;
 
+use super::{AssistantEvent, AssistantStep, SpeechResult};
+use crate::{
+    audio_path, audio_url, error::AppError, extractors::AppContext, handlers::ChatInputEvent,
+    AppState,
+};
 use anyhow::{anyhow, Result};
 use askama_axum::IntoResponse;
 use axum::{
@@ -8,15 +13,12 @@ use axum::{
 };
 use llm_sdk::{
     ChatCompletionMessage, ChatCompletionRequest, LlmSdk, SpeechRequest, WhisperRequest,
+    WhisperRequestBuilder, WhisperRequestType,
 };
 use serde_json::json;
 use tokio::{fs, sync::broadcast};
 use tracing::info;
 use uuid::Uuid;
-
-use crate::{audio_path, audio_url, error::AppError, extractors::AppContext, AppState};
-
-use super::{AssistantEvent, AssistantStep};
 
 pub async fn assistant_handler(
     context: AppContext,
@@ -72,11 +74,11 @@ async fn process(
 
     info!("audio buffer size {}", data.len());
 
-    signal_sender.send(in_transcription())?;
     // 语音转文字
+    signal_sender.send(in_transcription())?;
     let input = transcript(llm, data.to_vec()).await?;
+    chat_sender.send(ChatInputEvent::new(&input).into())?;
     info!("> input {}", &input);
-    chat_sender.send(format!("<p>A: {}</p></br>", input).into())?;
 
     // 内容发送给聊天API
     signal_sender.send(in_chat_completion())?;
@@ -85,29 +87,34 @@ async fn process(
 
     // 回复内容转成语音
     signal_sender.send(in_speech())?;
-    let audio_url = speech(llm, device_id, &output).await?;
-    info!("audio_url {:?}", audio_url);
+    let speech = speech(llm, device_id, &output).await?;
+    // info!("audio_url {:?}", audio_url.url);
 
     signal_sender.send(complete())?;
-    chat_sender.send(
-        format!(
-            "
-                <li><audio controls autoplay>
-                    <source src='{}' type='audio/mp3'>
-                </audio></li>
-                <p>Q: {}</p>
-                </br>
-            ",
-            audio_url, output
-        )
-        .into(),
-    )?;
+    chat_sender.send(speech.into())?;
+    // chat_sender.send(
+    //     format!(
+    //         "
+    //             <li><audio controls autoplay>
+    //                 <source src='{}' type='audio/mp3'>
+    //             </audio></li>
+    //             <p>Q: {}</p>
+    //             </br>
+    //         ",
+    //         audio_url.url, output
+    //     )
+    //     .into(),
+    // )?;
 
     Ok(())
 }
 
-async fn transcript(llm: &LlmSdk, data: Vec<u8>) -> anyhow::Result<String> {
-    let req = WhisperRequest::transcription(data);
+async fn transcript(llm: &LlmSdk, audio_buffer: Vec<u8>) -> anyhow::Result<String> {
+    let req = WhisperRequestBuilder::default()
+        .file(audio_buffer)
+        .prompt("If audio language is Chinese, please use Simplified CHinese")
+        .request_type(WhisperRequestType::Transcription)
+        .build()?;
     let res = llm.whisper(req).await?;
 
     Ok(res.text)
@@ -132,7 +139,7 @@ async fn chat_completion(llm: &LlmSdk, prompt: &str) -> anyhow::Result<String> {
     Ok(text)
 }
 
-async fn speech(llm: &LlmSdk, device_id: &str, text: &str) -> anyhow::Result<String> {
+async fn speech(llm: &LlmSdk, device_id: &str, text: &str) -> anyhow::Result<SpeechResult> {
     let req = SpeechRequest::new(text);
     let audio_stream = llm.speech(req).await?;
     let uuid = Uuid::new_v4().to_string();
@@ -144,47 +151,47 @@ async fn speech(llm: &LlmSdk, device_id: &str, text: &str) -> anyhow::Result<Str
     }
     fs::write(path, audio_stream).await?;
 
-    Ok(audio_url(device_id, &uuid))
+    Ok(SpeechResult::new(text, audio_url(device_id, &uuid)))
 }
 
 fn in_audio_upload() -> String {
-    AssistantEvent::processing(AssistantStep::UploadAudio)
+    AssistantEvent::Processing(AssistantStep::UploadAudio).to_string()
 }
 
 fn in_transcription() -> String {
-    AssistantEvent::processing(AssistantStep::Transcription)
+    AssistantEvent::Processing(AssistantStep::Transcription).to_string()
 }
 
 fn in_chat_completion() -> String {
-    AssistantEvent::processing(AssistantStep::ChatCompletion)
+    AssistantEvent::Processing(AssistantStep::ChatCompletion).to_string()
 }
 
 fn in_speech() -> String {
-    AssistantEvent::processing(AssistantStep::Speech)
+    AssistantEvent::Processing(AssistantStep::Speech).to_string()
 }
 
 #[allow(dead_code)]
 fn finish_upload_audio() -> String {
-    AssistantEvent::finish(AssistantStep::UploadAudio)
+    AssistantEvent::Finish(AssistantStep::UploadAudio).to_string()
 }
 
 #[allow(dead_code)]
 fn finish_transcription() -> String {
-    AssistantEvent::finish(AssistantStep::Transcription)
+    AssistantEvent::Finish(AssistantStep::Transcription).to_string()
 }
 
 #[allow(dead_code)]
 fn finish_chat_completion() -> String {
-    AssistantEvent::finish(AssistantStep::ChatCompletion)
+    AssistantEvent::Finish(AssistantStep::ChatCompletion).to_string()
 }
 
 #[allow(dead_code)]
 fn finish_speech() -> String {
-    AssistantEvent::finish(AssistantStep::Speech)
+    AssistantEvent::Finish(AssistantStep::Speech).to_string()
 }
 
 fn complete() -> String {
-    AssistantEvent::complete()
+    AssistantEvent::Complete.to_string()
 }
 
 fn error(msg: impl Into<String>) -> String {
