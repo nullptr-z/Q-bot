@@ -7,12 +7,12 @@ use std::path::{Path, PathBuf};
 use clap::Parser;
 use dashmap::DashMap;
 use llm_sdk::LlmSdk;
-use tokio::sync::mpsc;
+use tokio::sync::broadcast;
 
 #[derive(Debug)]
 pub struct AppState {
     pub llm: LlmSdk,
-    pub senders: DashMap<String, mpsc::Sender<serde_json::Value>>,
+    pub senders: DashMap<String, broadcast::Sender<serde_json::Value>>,
 }
 
 #[derive(Debug, Parser)]

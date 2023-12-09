@@ -1329,6 +1329,7 @@ dependencies = [
  "llm-sdk",
  "serde",
  "serde_json",
+ "strum",
  "tokio",
  "tokio-stream",
  "tower-http",
@@ -1981,6 +1982,7 @@ dependencies = [
  "futures-core",
  "pin-project-lite",
  "tokio",
+ "tokio-util",
 ]
 
 [[package]]
