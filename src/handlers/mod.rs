@@ -46,6 +46,8 @@ pub enum AssistantStep {
     Transcription,
     ChatCompletion,
     Speech,
+    DraImage,
+    WriteCode,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Template)]
