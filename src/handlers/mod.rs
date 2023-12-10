@@ -9,6 +9,8 @@ pub use common::*;
 use serde::{Deserialize, Serialize};
 use strum::{Display, EnumString};
 
+use crate::tools::{DrawImageResult, WriteCodeResult};
+
 // 几种事件
 #[derive(Debug, Clone, Serialize, Deserialize, Template)]
 #[template(path = "event/signal.html.jinja")]
@@ -25,8 +27,8 @@ pub enum AssistantEvent {
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 enum ChatReplyEvent {
     Speech(SpeechResult),
-    // Image(ImageResult),
-    // Markdown(MarkdownResult),
+    Image(DrawImageResult),
+    Markdown(WriteCodeResult),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Template)]
@@ -83,14 +85,20 @@ impl From<AssistantEvent> for String {
     }
 }
 
-impl From<SpeechResult> for ChatReplyEvent {
+impl From<SpeechResult> for String {
     fn from(value: SpeechResult) -> Self {
-        Self::Speech(value)
+        ChatReplyEvent::from(value).render().unwrap()
     }
 }
 
-impl From<SpeechResult> for String {
-    fn from(value: SpeechResult) -> Self {
+impl From<DrawImageResult> for String {
+    fn from(value: DrawImageResult) -> Self {
+        ChatReplyEvent::from(value).render().unwrap()
+    }
+}
+
+impl From<WriteCodeResult> for String {
+    fn from(value: WriteCodeResult) -> Self {
         ChatReplyEvent::from(value).render().unwrap()
     }
 }
@@ -98,5 +106,23 @@ impl From<SpeechResult> for String {
 impl From<ChatInputEvent> for String {
     fn from(value: ChatInputEvent) -> Self {
         value.render().unwrap()
+    }
+}
+
+impl From<SpeechResult> for ChatReplyEvent {
+    fn from(value: SpeechResult) -> Self {
+        Self::Speech(value)
+    }
+}
+
+impl From<DrawImageResult> for ChatReplyEvent {
+    fn from(value: DrawImageResult) -> Self {
+        Self::Image(value)
+    }
+}
+
+impl From<WriteCodeResult> for ChatReplyEvent {
+    fn from(value: WriteCodeResult) -> Self {
+        Self::Markdown(value)
     }
 }
