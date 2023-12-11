@@ -60,7 +60,10 @@ pub(crate) fn all_tools() -> Vec<Tool> {
     vec![
         // Tool::new_function::<DrawImageArgs>("draw_image", "Draw an image based on the prompt."),
         Tool::new_function::<WriteCodeArgs>("write_code", "Write code based on the prompt."),
-        Tool::new_function::<WriteCodeArgs>("answer", "Just reply based on the prompt."),
+        Tool::new_function::<AnswerCodeArgs>(
+            "answer",
+            "Just reply based on the prompt, please use simplified chinese.",
+        ),
     ]
 }
 
@@ -72,15 +75,3 @@ impl DrawImageResult {
         }
     }
 }
-
-// impl From<DrawImageResult> for String {
-//     fn from(value: DrawImageResult) -> Self {
-//         value.render().unwrap()
-//     }
-// }
-
-// impl From<WriteCodeResult> for String {
-//     fn from(value: WriteCodeResult) -> Self {
-//         value.render().unwrap()
-//     }
-// }

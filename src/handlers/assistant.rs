@@ -1,9 +1,9 @@
-use super::{AssistantEvent, AssistantStep, SpeechResult};
+use super::{AssistantEvent, AssistantStep, SignalEvent, SpeechResult};
 use crate::{
     audio_path, audio_url,
     error::AppError,
     extractors::AppContext,
-    handlers::ChatInputEvent,
+    handlers::{ChatInputEvent, ChatInputSkeletonEvent, ChatReplyEvent, ChatReplySkeletonEvent},
     image_path, image_url,
     tools::{
         tool_completion_request, AnswerCodeArgs, AssistantTool, DrawImageArgs, DrawImageResult,
@@ -18,11 +18,10 @@ use axum::{
     Json,
 };
 use base64::{engine::general_purpose::STANDARD, Engine};
-use comrak::markdown_to_html;
+use comrak::{markdown_to_html_with_plugins, plugins::syntect::SyntectAdapter};
 use llm_sdk::{
-    ChatCompletionChoice, ChatCompletionMessage, ChatCompletionRequest, CreateImageRequest,
-    CreateImageRequestBuilder, ImageResponseFormat, LlmSdk, SpeechRequest, WhisperRequest,
-    WhisperRequestBuilder, WhisperRequestType,
+    ChatCompletionChoice, ChatCompletionMessage, ChatCompletionRequest, CreateImageRequestBuilder,
+    ImageResponseFormat, LlmSdk, SpeechRequest, WhisperRequestBuilder, WhisperRequestType,
 };
 use serde_json::json;
 use std::sync::Arc;
@@ -38,25 +37,18 @@ pub async fn assistant_handler(
     let device_id = &context.device_id;
     info!("start assist for {}", device_id);
 
-    // state of process sender
-    let signal_sender = state
-        .signals
-        .get(device_id)
-        .ok_or_else(|| anyhow!("device_id not found for signal sender"))?
-        .clone();
-
     // chat content sender
-    let chat_sender = state
-        .chats
+    let event_sender = state
+        .events
         .get(device_id)
         .ok_or_else(|| anyhow!("device_id not found for chat sender"))?
         .clone();
 
     let llm = &state.llm;
 
-    let _ = match process(&signal_sender, &chat_sender, llm, device_id, multipart).await {
+    let _ = match process(&event_sender, llm, device_id, multipart).await {
         Err(err) => {
-            signal_sender.send(error(err.to_string()))?;
+            event_sender.send(error(err.to_string()).into())?;
             return Ok(Json(json!({"status":"error"})));
         }
         _ => {}
@@ -66,13 +58,14 @@ pub async fn assistant_handler(
 }
 
 async fn process(
-    signal_sender: &broadcast::Sender<String>,
-    chat_sender: &broadcast::Sender<String>,
+    event_sender: &broadcast::Sender<AssistantEvent>,
     llm: &LlmSdk,
     device_id: &str,
     mut multipart: Multipart,
 ) -> Result<()> {
-    signal_sender.send(in_audio_upload())?;
+    let id = Uuid::new_v4().to_string();
+
+    event_sender.send(in_audio_upload())?;
 
     let Some(field) = multipart.next_field().await? else {
         return Err(anyhow!("expected an audio field"))?;
@@ -85,13 +78,15 @@ async fn process(
     info!("audio buffer size {}", data.len());
 
     // 语音转文字
-    signal_sender.send(in_transcription())?;
+    event_sender.send(in_transcription())?;
+    event_sender.send(ChatInputSkeletonEvent::new(&id).into())?;
     let input = transcript(llm, data.to_vec()).await?;
-    chat_sender.send(ChatInputEvent::new(&input).into())?;
     info!("> input {}", &input);
+    event_sender.send(ChatInputEvent::new(&id, &input).into())?;
 
-    // 内容发送给聊天API
-    signal_sender.send(in_chat_completion())?;
+    // choice, 选择模型
+    event_sender.send(in_thinking())?;
+    event_sender.send(ChatReplySkeletonEvent::new(&id).into())?;
     let choice = chat_completion_with_tools(llm, &input).await?;
 
     match choice.finish_reason {
@@ -103,11 +98,13 @@ async fn process(
             info!("> output {}", &output);
 
             // 回复内容转成语音
-            signal_sender.send(in_speech())?;
-            let speech = speech(llm, device_id, &output).await?;
+            event_sender.send(in_speech())?;
+            let speech_ret = SpeechResult::new_text_only(&output);
+            event_sender.send(ChatReplyEvent::new(&id, speech_ret).into())?;
 
-            signal_sender.send(complete())?;
-            chat_sender.send(speech.into())?;
+            let speech_ret = speech(llm, device_id, &output).await?;
+            event_sender.send(complete())?;
+            event_sender.send(ChatReplyEvent::new(&id, speech_ret).into())?;
         }
         llm_sdk::FinishReason::ToolCalls => {
             let tool_call = &choice.message.tool_calls[0].function;
@@ -115,55 +112,43 @@ async fn process(
             let tool = tool_call.name.parse().unwrap_or(AssistantTool::Answer);
             match tool {
                 AssistantTool::DrawImage => {
-                    signal_sender.send(in_draw_image())?;
-                    let ret = draw_image(
-                        llm,
-                        device_id,
-                        serde_json::from_str(&tool_call.arguments).unwrap(),
-                    )
-                    .await?;
+                    let args: DrawImageArgs = serde_json::from_str(&tool_call.arguments)?;
 
-                    signal_sender.send(complete())?;
-                    chat_sender.send(ret.into())?;
+                    event_sender.send(in_draw_image())?;
+                    let ret = DrawImageResult::new("", &args.prompt);
+                    event_sender.send(ChatReplyEvent::new(&id, ret).into())?;
+
+                    let ret = draw_image(llm, device_id, args).await?;
+                    event_sender.send(complete())?;
+                    event_sender.send(ChatReplyEvent::new(&id, ret).into())?;
                 }
                 AssistantTool::WriteCode => {
-                    signal_sender.send(in_write_code())?;
+                    event_sender.send(in_write_code())?;
                     let ret = write_code(llm, serde_json::from_str(&tool_call.arguments).unwrap())
                         .await?;
 
-                    signal_sender.send(complete())?;
-                    chat_sender.send(ret.into())?;
+                    event_sender.send(complete())?;
+                    event_sender.send(ChatReplyEvent::new(&id, ret).into())?;
                 }
                 AssistantTool::Answer => {
-                    signal_sender.send(in_chat_completion())?;
+                    event_sender.send(in_chat_completion())?;
                     let output =
                         answer(llm, serde_json::from_str(&tool_call.arguments).unwrap()).await?;
 
-                    // 回复内容转成语音
-                    signal_sender.send(in_speech())?;
-                    let speech = speech(llm, device_id, &output).await?;
+                    event_sender.send(complete())?;
+                    let speech_ret = SpeechResult::new_text_only(&output);
+                    event_sender.send(ChatReplyEvent::new(&id, speech_ret).into())?;
 
-                    signal_sender.send(complete())?;
-                    chat_sender.send(speech.into())?;
+                    // 回复内容转成语音
+                    event_sender.send(in_speech())?;
+                    let ret = speech(llm, device_id, &output).await?;
+                    event_sender.send(complete())?;
+                    event_sender.send(ChatReplyEvent::new(&id, ret).into())?;
                 }
             }
         }
         _ => {}
     }
-
-    // chat_sender.send(
-    //     format!(
-    //         "
-    //             <li><audio controls autoplay>
-    //                 <source src='{}' type='audio/mp3'>
-    //             </audio></li>
-    //             <p>Q: {}</p>
-    //             </br>
-    //         ",
-    //         audio_url.url, output
-    //     )
-    //     .into(),
-    // )?;
 
     Ok(())
 }
@@ -206,7 +191,7 @@ async fn chat_completion_with_tools(
 async fn transcript(llm: &LlmSdk, audio_buffer: Vec<u8>) -> anyhow::Result<String> {
     let req = WhisperRequestBuilder::default()
         .file(audio_buffer)
-        .prompt("If audio language is Chinese, please use Simplified Chinese")
+        .prompt("If audio language is Chinese, please use simplified chinese")
         .request_type(WhisperRequestType::Transcription)
         .build()?;
     let res = llm.whisper(req).await?;
@@ -250,10 +235,20 @@ async fn write_code(llm: &LlmSdk, args: WriteCodeArgs) -> anyhow::Result<WriteCo
         ChatCompletionMessage::new_user(args.prompt, "zheng"),
     ];
 
-    let output = chat_completion(llm, messages).await?;
-    let md = markdown_to_html(&output, &comrak::ComrakOptions::default());
+    let md = chat_completion(llm, messages).await?;
 
-    Ok(WriteCodeResult { content: md })
+    Ok(WriteCodeResult {
+        content: md2html(&md),
+    })
+}
+
+fn md2html(md: &str) -> String {
+    let adapter = SyntectAdapter::new(Some("Solarized (dark)"));
+    let options = comrak::Options::default();
+    let mut plugins = comrak::Plugins::default();
+
+    plugins.render.codefence_syntax_highlighter = Some(&adapter);
+    markdown_to_html_with_plugins(md, &options, &plugins)
 }
 
 async fn draw_image(
@@ -288,36 +283,40 @@ async fn draw_image(
     ))
 }
 
-fn in_audio_upload() -> String {
-    AssistantEvent::Processing(AssistantStep::UploadAudio).to_string()
+fn in_audio_upload() -> AssistantEvent {
+    SignalEvent::Processing(AssistantStep::UploadAudio).into()
 }
 
-fn in_transcription() -> String {
-    AssistantEvent::Processing(AssistantStep::Transcription).to_string()
+fn in_transcription() -> AssistantEvent {
+    SignalEvent::Processing(AssistantStep::Transcription).into()
 }
 
-fn in_chat_completion() -> String {
-    AssistantEvent::Processing(AssistantStep::ChatCompletion).to_string()
+fn in_thinking() -> AssistantEvent {
+    SignalEvent::Processing(AssistantStep::Thinking).into()
 }
 
-fn in_speech() -> String {
-    AssistantEvent::Processing(AssistantStep::Speech).to_string()
+fn in_chat_completion() -> AssistantEvent {
+    SignalEvent::Processing(AssistantStep::ChatCompletion).into()
 }
 
-fn in_draw_image() -> String {
-    AssistantEvent::Processing(AssistantStep::DraImage).to_string()
+fn in_speech() -> AssistantEvent {
+    SignalEvent::Processing(AssistantStep::Speech).into()
 }
 
-fn in_write_code() -> String {
-    AssistantEvent::Processing(AssistantStep::WriteCode).to_string()
+fn in_draw_image() -> AssistantEvent {
+    SignalEvent::Processing(AssistantStep::DraImage).into()
 }
 
-fn complete() -> String {
-    AssistantEvent::Complete.to_string()
+fn in_write_code() -> AssistantEvent {
+    SignalEvent::Processing(AssistantStep::WriteCode).into()
 }
 
-fn error(msg: impl Into<String>) -> String {
-    AssistantEvent::Error(msg.into()).to_string()
+fn complete() -> AssistantEvent {
+    SignalEvent::Complete.into()
+}
+
+fn error(msg: impl Into<String>) -> AssistantEvent {
+    SignalEvent::Error(msg.into()).into()
 }
 
 #[cfg(test)]

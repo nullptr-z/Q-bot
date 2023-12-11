@@ -1,5 +1,8 @@
 import { Inter } from 'next/font/google'
 import './globals.css'
+import { initAxios } from '@/utils'
+
+initAxios()
 
 const inter = Inter({ subsets: ['latin'] })
 

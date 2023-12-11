@@ -7,14 +7,14 @@ use std::path::{Path, PathBuf};
 
 use clap::Parser;
 use dashmap::DashMap;
+use handlers::AssistantEvent;
 use llm_sdk::LlmSdk;
 use tokio::sync::broadcast;
 
 #[derive(Debug)]
 pub struct AppState {
     pub llm: LlmSdk,
-    pub signals: DashMap<String, broadcast::Sender<String>>,
-    pub chats: DashMap<String, broadcast::Sender<String>>,
+    pub events: DashMap<String, broadcast::Sender<AssistantEvent>>,
 }
 
 #[derive(Debug, Parser)]
@@ -34,8 +34,7 @@ impl Default for AppState {
                 std::env::var("OPENAI_API_KEY").unwrap(),
                 3,
             ),
-            signals: DashMap::new(),
-            chats: DashMap::new(),
+            events: DashMap::new(),
         }
     }
 }
