@@ -21,7 +21,7 @@
   let isRecording
 
   function recordingState() {
-    recorder = new Recorder(0)
+    recorder = new Recorder()
 
     return {
       isRecording: false,
@@ -90,6 +90,7 @@
       console.log(event);
     });
   });
+
   class Recorder {
     mediaRecorder;
     recordedChunks = [];
